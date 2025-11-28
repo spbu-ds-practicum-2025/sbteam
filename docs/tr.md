@@ -40,11 +40,9 @@
 Система должна предоставлять следующие функции:
   1. Создание сокращённого URL по исходному.
   2. Переадресация по сокращённому URL.
-  3. Получение метаданных по сокращённому URL.
-  4. Ограничение числа запросов на пользователя.
-  5. Задание TTL.
-  6. Валидация URL.
-  7. Гарантия уникальность сокращённого URL.
+  3. Получение метаданных по сокращённому URL (время создания, истечения).
+  4. Задание TTL.
+  5. Валидация URL.
 
 ---
 
@@ -54,20 +52,29 @@
   3. Масштабируемость: разделение логических компонентов на микросервисы, репликации баз данных, распределённый кэш.
   4. Доступность > 99.9%.
   5. Отказоустойчивость: cистема продолжает раобтать при сбое одного из узлов.
-  6. Согласованность: короткие URL не могут быть утеряны, гарнтируется их уникальность.
-  7. Поддерживаемость и расширяемость: модульность, покрытие тестами ≥ 80%. 
+  6. Согласованность: короткие URL не могут быть утеряны, гарантируется их уникальность.
+  7. Поддерживаемость и расширяемость: модульность, покрытие тестами ≥ 80%.
+  8. Ограничение числа запросов на пользователя.
+  9. Гарантия уникальности сокращённого URL.
 
 ---
 
 ## Пользовательские сценарии
-**Сценарий: Создание короткой ссылки по длинной**
+### Сценарий: Создание короткой ссылки по длинной
 
-  Пользователь вводит Long URL и получает сгенерированный уникальный Short URL.
+1. Пользователь отправляет Long URL
+2. Система создаёт уникальный Short URL и возвращает его.
 
-**Сценарий: Перенаправление по короткой ссылке на адрес длинной**
+### Сценарий: Перенаправление по короткой ссылке на адрес длинной
 
-  Пользователь переходит по Short URL и перенарпавляется на Long URL.
-  
+1. Пользователь переходит по Short URL.
+2. Система перенаправляет его на Long URL.
+
+### Сценарий: Переход по истёшкей ссылке
+
+1. Пользователь переходит по Short URL с истёкшим TTL.
+2. Пользователь видит сообщение об ошибке/истечении срока действия.
+
 ---
 
 ##  Архитектура системы
@@ -81,19 +88,124 @@
 | Master DB | Основная база данных (write). Хранит актуальные данные о сопоставлениях URL. Принимает операции записи от Write API. |
 | Un-Sync Slave | Реплика базы данных (read). Предназначена для выполнения операций чтения. Запросы от Read API идут сюда, снижая нагрузку на master. |
 | In-Sync Replica | Синхронная реплика. Резервная реплика для обеспечения консистентности и восстановления после сбоев. Используется внутренними механизмами БД. |
+```mermaid
+graph LR;
+  WC["Write client"];
+  RC["Read client"];
+  GW["API Gateway"];
+  W["Write API"];
+  R["Read API"];
+  GEN["Generator"];
+  MASTER["Master DB (write)"];
+  CACHE["Cache"];
+  SLAVE["Slave DB (read)"];
+  INSYNC["In-sync replica"];
 
+  WC -- HTTP --> GW;
+  RC -- HTTP --> GW;
 
-<img width="1657" height="723" alt="Снимок экрана от 2025-11-24 23-35-51" src="https://github.com/user-attachments/assets/8c0f719a-55b3-4ae6-9d58-9e1a711c1707" />
+  GW -- gRPC --> W;
+  GW -- gRPC --> R;
 
+  W -- gRPC --> GEN;
+  W --> MASTER;
+
+  MASTER --> SLAVE;
+  MASTER --> INSYNC;
+
+  R --> CACHE;
+  R --> SLAVE;
+```
 ---
 
 ## Технические сценарии
+### Сценарий 1: Создание Short URL
+1. Пользователь отправляет HTTP-запрос POST /api/shortUrls с длинной ссылкой и TTL.
+2. API Gateway по gRPC передаёт запрос в сервис Write API.
+3. Write API запрашивает у сервиса generator уникальный shortCode, сохраняет пару shortCode -> longUrl (и время истечения) в мастер-базу.
+4. После успешной записи Write API возвращает shortCode в API Gateway, который отвечает клиенту 201 Created и полным коротким URL.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant GW as API Gateway
+    participant W as Write API
+    participant Gen as generator
+    participant MDB as Master ShortURL DB
 
-<img width="1280" height="369" alt="image" src="https://github.com/user-attachments/assets/2b373008-12a9-445a-aa32-08479fd020be" />
+    C->>GW: POST /api/shortUrls { longUrl, ttl }
+    GW->>W: gRPC CreateShortUrl(longUrl, ttl)
+    W->>Gen: gRPC GenerateShortCode()
+    Gen-->>W: shortCode
+    W->>MDB: INSERT { shortCode, longUrl, expiresAt }
+    MDB-->>W: OK
+    W-->>GW: shortCode
+    GW-->>C: 201 Created + shortUrl
+```
+### Сценарий 2: Переход по Short URL
+1. Пользователь переходит по короткой ссылке (например, кликает в браузере), что вызывает GET /api/shortUrls/{shortCode}.
+2. API Gateway по gRPC отправляет запрос в Read API.
+3. Read API сначала проверяет Redis-кеш:
+   - если запись найдена — сразу берёт оттуда longUrl;
+   - если нет — читает из реплики БД (Slave ShortURL DB), получает longUrl (и expiresAt), кладёт в Redis с TTL.
+4. После этого Read API возвращает длинный URL в API Gateway, который отвечает клиенту редиректом HTTP 302 с заголовком Location: longUrl. Браузер автоматически перенаправляется на оригинальный ресурс.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant GW as API Gateway
+    participant R as Read API
+    participant Cache as Redis
+    participant SDB as Slave ShortURL DB
 
-<img width="1280" height="367" alt="image" src="https://github.com/user-attachments/assets/c19f43a6-0fe3-4718-a6eb-0497373192ea" />
+    C->>GW: GET /api/shortUrls/{shortCode}
+    GW->>R: gRPC ResolveShortUrl(shortCode)
+    R->>Cache: GET longUrl by shortCode
+    alt cache hit
+        Cache-->>R: longUrl
+    else cache miss
+        Cache-->>R: null
+        R->>SDB: SELECT longUrl, expiresAt WHERE shortCode
+        SDB-->>R: longUrl, expiresAt
+        R->>Cache: SET longUrl with TTL
+    end
+    R-->>GW: longUrl
+    GW-->>C: HTTP 301 Location: longUrl
+```
+# Сценарий: Переход по ссылке с истекшим TTL
+1. Пользователь переходит по короткой ссылке, у которой уже истёк TTL.
+2. Запрос идёт в API Gateway (GET /api/shortUrls/{shortCode}) и затем в Read API по gRPC.
+3. Read API проверяет Redis. Для истёкших ссылок обычно записи уже нет (либо вообще не кэшируются, либо были удалены по TTL), поэтому — промах.
+4. Read API читает запись из Slave ShortURL DB и получает longUrl и expiresAt.
+5. Сервис сравнивает expiresAt с текущим временем:
+   - если expiresAt < now, ссылка считается просроченной. Вместо редиректа Read API возвращает в API Gateway информацию об ошибке: «ссылка истекла».
+6. API Gateway отвечает клиенту, например, HTTP 410 Gone.
+7. Пользователь видит страницу об ошибке/истечении срока действия ссылки, редиректа на оригинальный URL не происходит.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant GW as API Gateway
+    participant R as Read API
+    participant Cache as Redis
+    participant SDB as Slave ShortURL DB
 
-
+    C->>GW: GET /api/shortUrls/{shortCode}
+    GW->>R: gRPC ResolveShortUrl(shortCode)
+    R->>Cache: GET longUrl by shortCode
+    alt cache hit (expired not cached)
+        Cache-->>R: null
+    else cache miss
+        Cache-->>R: null
+    end
+    R->>SDB: SELECT longUrl, expiresAt WHERE shortCode
+    SDB-->>R: longUrl, expiresAt (expired)
+    R->>R: проверка expiresAt < now
+    alt ссылка истекла
+        R-->>GW: error (expired)
+        GW-->>C: HTTP 410 Gone (или 404 Not Found)
+    end
+```
 ---
 
 ## План разработки и тестирования
@@ -115,6 +227,39 @@
 1. Проектирование протоколов взаимодействия (HTTP API Gateway, gRPC-сервисы)
 2. Реализация API Gateway (роутинг, rate limiting, валидация запросов)
 3. Реализация Generator (генерация коротких токенов)
+```
+Основа — Snowflake
+
+Генератор формирует 64-битное целое число по схеме:
+[ timestamp ][ instanceId ][ sequence ]
+Где:
+timestamp — количество миллисекунд от заданной Epoch (фиксированной стартовой даты);
+instanceId — идентификатор инстанса сервиса генерации (чтобы несколько экземпляров могли генерировать коды параллельно без коллизий);
+sequence — счётчик внутри одной миллисекунды (решает коллизии, если один инстанс за одну миллисекунду генерирует несколько кодов).
+Гарантия уникальности
+
+В пределах одного инстанса:
+если новый вызов генерации попадает в ту же самую миллисекунду, увеличивается sequence;
+как только счётчик достигает максимума, генератор ждёт следующую миллисекунду и сбрасывает sequence в 0.
+Между инстансами:
+у каждого инстанса свой instanceId, поэтому даже при одинаковом времени и sequence итоговое 64-битное число разное.
+
+Монотонность
+Пока системные часы не откатываются назад, сгенерированные числа строго растут по времени.
+На практике это означает, что short-коды упорядочены по времени создания (по возрастанию).
+
+Кодирование в строку
+Полученное 64-битное число кодируется в base62:
+алфавит из цифр и латинских букв: 0-9, a-z, A-Z;
+число последовательно делится на 62, по остаткам выбираются символы.
+В результате получается короткая, URL-безопасная строка без спецсимволов (например, aZ3f9Q).
+
+Ограничения и валидации
+Генератор проверяет, что:
+текущее время > Epoch (защита от «времени в прошлом»);
+значение timestamp помещается в отведённое количество бит (ограничение на максимальный «срок жизни» схемы).
+При нарушении этих условий генератор сигнализирует об ошибке, чтобы не выдавать потенциально конфликтующие коды.
+```
 4. Реализация Write API:
    - получение длинного URL
    - запрос к Generator
@@ -151,7 +296,7 @@
 ### **Definition of Done (DoD) для MVP:**
 - Реализованы сценарии:
   - создание короткого URL
-  - получение оригинального URL
+  - редирект по Short URL на Long URL 
 - Все основные сервисы интегрированы и покрыты тестами
 - Система соответствует базовым нефункциональным требованиям:
   - доступность 99.9%
