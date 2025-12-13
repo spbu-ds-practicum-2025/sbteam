@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>URL Shortener</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <div class="brand">
+        <div class="logo">🔗</div>
+        <div>
+          <h1>URL Shortener</h1>
+        </div>
+      </div>
+    </header>
+
+    <main class="grid">
+      <!-- CREATE -->
+      <section class="card">
+        <h2>Создать короткую ссылку</h2>
+
+        <label class="label" for="longUrl">Long URL</label>
+        <input id="longUrl" class="input" placeholder="https://example.com/some/very/long/url" />
+
+        <div class="row two">
+          <div>
+            <label class="label" for="ttl">TTL (сек.)</label>
+            <input id="ttl" class="input" type="number" min="0" step="1" value="604800" />
+            <p class="hint">0 или пусто — “как решит бекенд”.</p>
+          </div>
+          <div class="actions">
+            <button class="btn primary" id="createBtn" type="button">Создать</button>
+            <button class="btn secondary" id="clearCreateBtn" type="button">Очистить</button>
+          </div>
+        </div>
+
+        <div id="createResult" class="result hidden">
+          <div class="result-head">
+            <div>
+              <div class="muted small">Short URL</div>
+              <a id="shortLink" href="#" target="_blank" rel="noreferrer"></a>
+            </div>
+            <button class="btn secondary" id="copyBtn" type="button">Скопировать</button>
+          </div>
+
+          <div class="meta">
+            <div class="meta-item">
+              <div class="muted small">Code</div>
+              <div id="code"></div>
+            </div>
+            <div class="meta-item">
+              <div class="muted small">CreatedAt</div>
+              <div id="createdAt"></div>
+            </div>
+            <div class="meta-item">
+              <div class="muted small">ExpiresAt</div>
+              <div id="expiresAt"></div>
+            </div>
+          </div>
+
+          <details class="details">
+            <summary>Показать Long URL</summary>
+            <div id="longUrlOut" class="mono"></div>
+          </details>
+        </div>
+
+        <div id="createError" class="alert hidden"></div>
+      </section>
+
+      <!-- LOOKUP META -->
+      <section class="card">
+        <h2>Получить метаданные</h2>
+
+        <label class="label" for="codeOrUrl">Код или короткая ссылка</label>
+        <input id="codeOrUrl" class="input" placeholder="aZ3f9Q или http://localhost:8080/api/shortUrls/aZ3f9Q" />
+
+        <div class="actions">
+          <button class="btn primary" id="lookupBtn" type="button">Найти</button>
+          <button class="btn secondary" id="clearLookupBtn" type="button">Очистить</button>
+        </div>
+
+        <div id="lookupResult" class="result hidden">
+          <div class="meta">
+            <div class="meta-item">
+              <div class="muted small">Code</div>
+              <div id="lookupCode"></div>
+            </div>
+            <div class="meta-item">
+              <div class="muted small">CreatedAt</div>
+              <div id="lookupCreatedAt"></div>
+            </div>
+            <div class="meta-item">
+              <div class="muted small">ExpiresAt</div>
+              <div id="lookupExpiresAt"></div>
+            </div>
+            <div class="meta-item">
+              <div class="muted small">Status</div>
+              <div id="lookupStatus"></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="lookupError" class="alert hidden"></div>
+      </section>
+
+      <!-- HISTORY -->
+      <section class="card full">
+        <div class="row space-between">
+          <h2>История (локально)</h2>
+          <button class="btn danger" id="clearHistoryBtn" type="button">Очистить историю</button>
+        </div>
+
+        <div id="history" class="history"></div>
+        <p class="hint">Хранится в localStorage (последние 10).</p>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="./script.js"></script>
+</body>
+</html>

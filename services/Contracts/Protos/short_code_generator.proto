@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+option csharp_namespace = "Generator.Grpc";
+
+package short_code_generator;
+
+message GenerateShortCodeRequest{
+  
+}
+
+message GenerateShortCodeResponse{
+  string short_code = 1;
+}
+
+service ShortCodeGeneratorService{
+  rpc GenerateShortCode(GenerateShortCodeRequest) returns (GenerateShortCodeResponse);
+}
